@@ -1,366 +1,304 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, RotateCcw, Sparkles } from 'lucide-react';
-
-export default function TeleprompterApp() {
-  const [topic, setTopic] = useState('');
-  const [question, setQuestion] = useState('');
-  const [answer, setAnswer] = useState('');
-  const [displayedAnswer, setDisplayedAnswer] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  
-  // Settings
-  const [wordDelay, setWordDelay] = useState(200);
-  const [errorRate, setErrorRate] = useState(10);
-  const [questionAnswerDelay, setQuestionAnswerDelay] = useState(1000);
-  const [punctuationCorrectionRate, setPunctuationCorrectionRate] = useState(70);
-  
-  const generationRef = useRef(null);
-  const currentIndexRef = useRef(0);
-
-  const generateAnswer = async () => {
-    if (!question.trim()) return;
-    
-    setIsGenerating(true);
-    setDisplayedAnswer('');
-    currentIndexRef.current = 0;
-    
-    try {
-      // Wait for question-answer delay
-      await new Promise(resolve => setTimeout(resolve, questionAnswerDelay));
-      
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1000,
-          messages: [
-            {
-              role: 'user',
-              content: `Topic: ${topic}\n\nQuestion: ${question}\n\nProvide a clear, concise answer (2-3 sentences).`
-            }
-          ]
-        })
-      });
-      
-      const data = await response.json();
-      const generatedAnswer = data.content[0].text;
-      setAnswer(generatedAnswer);
-      
-      // Start word-by-word generation
-      typeAnswer(generatedAnswer);
-    } catch (error) {
-      console.error('Error generating answer:', error);
-      setAnswer('Error generating answer. Please try again.');
-      setIsGenerating(false);
-    }
-  };
-
-  const typeAnswer = async (text) => {
-    const words = text.split(' ');
-    let result = '';
-    
-    for (let i = currentIndexRef.current; i < words.length; i++) {
-      if (!isGenerating || isPaused) break;
-      
-      currentIndexRef.current = i;
-      let word = words[i];
-      
-      // Add typing error
-      if (Math.random() * 100 < errorRate && word.length > 2) {
-        const errorWord = introduceTypingError(word);
-        result += errorWord + ' ';
-        setDisplayedAnswer(result);
-        
-        // Wait and maybe correct it
-        await new Promise(resolve => setTimeout(resolve, wordDelay * 2));
-        
-        if (!isGenerating || isPaused) break;
-        
-        // Correct the error (word errors are always corrected)
-        result = result.slice(0, -errorWord.length - 1) + word + ' ';
-        setDisplayedAnswer(result);
-      } else {
-        result += word + ' ';
-        setDisplayedAnswer(result);
-      }
-      
-      // Check for punctuation errors (these may not be corrected)
-      if (Math.random() * 100 < errorRate) {
-        const lastChar = result.trim().slice(-1);
-        if (['.', ',', '!', '?'].includes(lastChar)) {
-          if (Math.random() * 100 > punctuationCorrectionRate) {
-            // Don't correct punctuation error - remove it
-            result = result.trim().slice(0, -1) + ' ';
-            setDisplayedAnswer(result);
-          }
-        }
-      }
-      
-      await new Promise(resolve => setTimeout(resolve, wordDelay));
-    }
-    
-    if (currentIndexRef.current >= words.length - 1) {
-      setIsGenerating(false);
-      setIsPaused(false);
-    }
-  };
-
-  const introduceTypingError = (word) => {
-    const chars = word.split('');
-    const pos = Math.floor(Math.random() * (chars.length - 1)) + 1;
-    
-    // Random error type: swap, wrong char, or duplicate
-    const errorType = Math.floor(Math.random() * 3);
-    
-    if (errorType === 0 && pos < chars.length - 1) {
-      // Swap adjacent characters
-      [chars[pos], chars[pos + 1]] = [chars[pos + 1], chars[pos]];
-    } else if (errorType === 1) {
-      // Wrong character
-      const wrongChars = 'abcdefghijklmnopqrstuvwxyz';
-      chars[pos] = wrongChars[Math.floor(Math.random() * wrongChars.length)];
-    } else {
-      // Duplicate character
-      chars.splice(pos, 0, chars[pos]);
-    }
-    
-    return chars.join('');
-  };
-
-  const handleAsk = () => {
-    generateAnswer();
-  };
-
-  const handleReset = () => {
-    setQuestion('');
-    setDisplayedAnswer('');
-    setAnswer('');
-    setIsGenerating(false);
-    setIsPaused(false);
-    currentIndexRef.current = 0;
-  };
-
-  const handleRandomGenerate = async () => {
-    if (!topic.trim()) {
-      alert('Please enter a topic first');
-      return;
-    }
-    
-    try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1000,
-          messages: [
-            {
-              role: 'user',
-              content: `Generate a thoughtful interview question about: ${topic}`
-            }
-          ]
-        })
-      });
-      
-      const data = await response.json();
-      const generatedQuestion = data.content[0].text.replace(/["]/g, '');
-      setQuestion(generatedQuestion);
-      
-      // Auto-generate answer after setting question
-      setTimeout(() => {
-        setAnswer('');
-        setDisplayedAnswer('');
-        generateAnswer();
-      }, 100);
-    } catch (error) {
-      console.error('Error generating question:', error);
-    }
-  };
-
-  const handleNext = () => {
-    handleRandomGenerate();
-  };
-
-  const handleStop = () => {
-    setIsPaused(true);
-  };
-
-  const handleResume = () => {
-    setIsPaused(false);
-    if (isGenerating && answer) {
-      typeAnswer(answer);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-8">
-      <div className="max-w-6xl mx-auto">
-        <h1 className="text-4xl font-bold text-white mb-8 text-center">
-          Teleprompting Practice Tool
-        </h1>
-        
-        {/* Section 1: Input and Display */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 mb-6 border border-white/20">
-          <h2 className="text-xl font-semibold text-white mb-4">Question & Answer</h2>
-          
-          <div className="mb-4">
-            <label className="block text-white mb-2">Topic</label>
-            <input
-              type="text"
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              placeholder="Enter topic (e.g., Artificial Intelligence, Climate Change)"
-              className="w-full px-4 py-2 rounded-lg bg-white/20 text-white placeholder-white/50 border border-white/30 focus:outline-none focus:ring-2 focus:ring-purple-400"
-            />
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Teleprompter — Standalone</title>
+    <style>
+      :root{--bg:#081026;--card:#071026;--muted:#9fb0c9;--accent:#7c3aed}
+      body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:linear-gradient(180deg,#05102a 0%,#091028 100%);color:#e6eef8;min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:48px}
+      .app{width:100%;max-width:980px}
+      .card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.04);padding:20px;border-radius:12px}
+      h1{margin:0 0 18px;font-size:24px;text-align:center}
+      label{display:block;color:var(--muted);font-size:13px;margin-bottom:8px}
+      input[type=text]{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);color:inherit}
+      .flex{display:flex;gap:10px;align-items:center}
+      button{padding:8px 12px;border-radius:8px;border:none;color:#fff;background:#6b7280;cursor:pointer}
+      button:disabled{opacity:0.5;cursor:not-allowed}
+      .controls{display:flex;flex-wrap:wrap;gap:8px}
+      .display{min-height:108px;padding:12px;border-radius:8px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.03);color:#fff}
+      .settings{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+      .range{width:100%}
+      .small{font-size:13px;color:var(--muted)}
+      .controls .btn{display:inline-flex;gap:8px;align-items:center;padding:8px 10px;border-radius:8px}
+      .btn.primary{background:linear-gradient(90deg,var(--accent),#5b21b6)}
+      .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+      .footer{margin-top:14px;font-size:13px;color:var(--muted)}
+      .api-row{display:flex;gap:8px;align-items:center}
+      .api-row input{flex:1}
+      .hint{font-size:13px;color:var(--muted);margin-top:8px}
+      /* icons */
+      .icon{width:16px;height:16px;display:inline-block}
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="card">
+        <h1>Teleprompting Practice Tool</h1>
+        <div class="toolbar">
+          <div class="api-row">
+            <label class="small" style="margin-right:8px">API Key (optional)</label>
+            <input id="apiKey" type="text" placeholder="Paste API key for Anthropic or leave empty to use mock responses" />
+            <button id="clearKey">Clear</button>
           </div>
-          
-          <div className="mb-4">
-            <label className="block text-white mb-2">Question</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                placeholder="Enter your question"
-                className="flex-1 px-4 py-2 rounded-lg bg-white/20 text-white placeholder-white/50 border border-white/30 focus:outline-none focus:ring-2 focus:ring-purple-400"
-              />
-              <button
-                onClick={handleAsk}
-                disabled={isGenerating || !question.trim()}
-                className="px-6 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white rounded-lg font-semibold transition"
-              >
-                Ask
-              </button>
+          <div class="small">Standalone (no build step)</div>
+        </div>
+
+        <!-- Inputs -->
+        <div style="margin-bottom:12px">
+          <label>Topic</label>
+          <input id="topic" type="text" placeholder="Enter topic (e.g., Artificial Intelligence)" />
+        </div>
+
+        <div style="margin-bottom:12px">
+          <label>Question</label>
+          <div class="flex">
+            <input id="question" type="text" placeholder="Enter your question" />
+            <button id="askBtn" class="btn primary">Ask</button>
+          </div>
+        </div>
+
+        <div style="margin-bottom:12px">
+          <label>Answer</label>
+          <div id="answerDisplay" class="display">Answer will appear here...</div>
+        </div>
+
+        <!-- Controls -->
+        <div style="margin-bottom:12px">
+          <label class="small">Controls</label>
+          <div class="controls">
+            <button id="resetBtn" class="btn">Reset</button>
+            <button id="randomBtn" class="btn">Random Q&amp;A</button>
+            <button id="nextBtn" class="btn">Next Question</button>
+            <button id="stopBtn" class="btn">Stop</button>
+            <button id="resumeBtn" class="btn">Resume</button>
+          </div>
+        </div>
+
+        <!-- Settings -->
+        <div>
+          <label class="small">Settings</label>
+          <div class="settings">
+            <div>
+              <label class="small">Word Delay: <span id="wordDelayVal">200</span>ms</label>
+              <input id="wordDelay" type="range" min="50" max="1000" step="50" value="200" class="range" />
             </div>
-          </div>
-          
-          <div>
-            <label className="block text-white mb-2">Answer</label>
-            <div className="min-h-32 px-4 py-3 rounded-lg bg-black/30 text-white border border-white/30">
-              {displayedAnswer || <span className="text-white/50">Answer will appear here...</span>}
+            <div>
+              <label class="small">Error Rate: <span id="errorRateVal">10</span>%</label>
+              <input id="errorRate" type="range" min="0" max="50" step="5" value="10" class="range" />
+            </div>
+            <div>
+              <label class="small">Question-Answer Delay: <span id="qDelayVal">1000</span>ms</label>
+              <input id="qDelay" type="range" min="0" max="5000" step="100" value="1000" class="range" />
+            </div>
+            <div>
+              <label class="small">Punctuation Correction Rate: <span id="pcVal">70</span>%</label>
+              <input id="pcRate" type="range" min="0" max="100" step="10" value="70" class="range" />
             </div>
           </div>
         </div>
-        
-        {/* Section 2: Controls */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 mb-6 border border-white/20">
-          <h2 className="text-xl font-semibold text-white mb-4">Controls</h2>
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={handleReset}
-              className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition"
-            >
-              <RotateCcw size={18} />
-              Reset
-            </button>
-            <button
-              onClick={handleRandomGenerate}
-              disabled={isGenerating || !topic.trim()}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white rounded-lg font-semibold transition"
-            >
-              <Sparkles size={18} />
-              Random Q&A
-            </button>
-            <button
-              onClick={handleNext}
-              disabled={isGenerating || !topic.trim()}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white rounded-lg font-semibold transition"
-            >
-              <SkipForward size={18} />
-              Next Question
-            </button>
-            <button
-              onClick={handleStop}
-              disabled={!isGenerating || isPaused}
-              className="flex items-center gap-2 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 text-white rounded-lg font-semibold transition"
-            >
-              <Pause size={18} />
-              Stop
-            </button>
-            <button
-              onClick={handleResume}
-              disabled={!isGenerating || !isPaused}
-              className="flex items-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-gray-600 text-white rounded-lg font-semibold transition"
-            >
-              <Play size={18} />
-              Resume
-            </button>
-          </div>
-        </div>
-        
-        {/* Section 3: Settings */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
-          <h2 className="text-xl font-semibold text-white mb-4">Settings</h2>
-          
-          <div className="space-y-4">
-            <div>
-              <label className="block text-white mb-2">
-                Word Delay: {wordDelay}ms
-              </label>
-              <input
-                type="range"
-                min="50"
-                max="1000"
-                step="50"
-                value={wordDelay}
-                onChange={(e) => setWordDelay(Number(e.target.value))}
-                className="w-full"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-white mb-2">
-                Error Rate: {errorRate}%
-              </label>
-              <input
-                type="range"
-                min="0"
-                max="50"
-                step="5"
-                value={errorRate}
-                onChange={(e) => setErrorRate(Number(e.target.value))}
-                className="w-full"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-white mb-2">
-                Question-Answer Delay: {questionAnswerDelay}ms
-              </label>
-              <input
-                type="range"
-                min="0"
-                max="5000"
-                step="100"
-                value={questionAnswerDelay}
-                onChange={(e) => setQuestionAnswerDelay(Number(e.target.value))}
-                className="w-full"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-white mb-2">
-                Punctuation Correction Rate: {punctuationCorrectionRate}%
-              </label>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                step="10"
-                value={punctuationCorrectionRate}
-                onChange={(e) => setPunctuationCorrectionRate(Number(e.target.value))}
-                className="w-full"
-              />
-            </div>
-          </div>
+
+        <div class="footer">
+          <div class="hint">Notes: If you don't provide an API key the page will use a local mock to generate questions/answers so you can test typing behavior.</div>
         </div>
       </div>
     </div>
-  );
-}
+
+    <script>
+      // State
+      let isGenerating = false;
+      let isPaused = false;
+      let answer = '';
+      let displayed = '';
+      let currentIndex = 0;
+
+      // Elements
+      const topicEl = document.getElementById('topic');
+      const questionEl = document.getElementById('question');
+      const answerEl = document.getElementById('answerDisplay');
+      const askBtn = document.getElementById('askBtn');
+      const resetBtn = document.getElementById('resetBtn');
+      const randomBtn = document.getElementById('randomBtn');
+      const nextBtn = document.getElementById('nextBtn');
+      const stopBtn = document.getElementById('stopBtn');
+      const resumeBtn = document.getElementById('resumeBtn');
+      const apiKeyEl = document.getElementById('apiKey');
+      const clearKeyBtn = document.getElementById('clearKey');
+
+      const wordDelayEl = document.getElementById('wordDelay');
+      const wordDelayVal = document.getElementById('wordDelayVal');
+      const errorRateEl = document.getElementById('errorRate');
+      const errorRateVal = document.getElementById('errorRateVal');
+      const qDelayEl = document.getElementById('qDelay');
+      const qDelayVal = document.getElementById('qDelayVal');
+      const pcRateEl = document.getElementById('pcRate');
+      const pcVal = document.getElementById('pcVal');
+
+      // Helpers
+      const delay = (ms) => new Promise(r => setTimeout(r, ms));
+
+      const setDisplayed = (txt) => {
+        displayed = txt;
+        answerEl.textContent = txt || 'Answer will appear here...';
+      }
+
+      function introduceTypingError(word) {
+        const chars = word.split('');
+        if (chars.length <= 1) return word;
+        const pos = Math.floor(Math.random() * (chars.length - 1)) + 1;
+        const errorType = Math.floor(Math.random() * 3);
+        if (errorType === 0 && pos < chars.length - 1) {
+          [chars[pos], chars[pos + 1]] = [chars[pos + 1], chars[pos]];
+        } else if (errorType === 1) {
+          const wrongChars = 'abcdefghijklmnopqrstuvwxyz';
+          chars[pos] = wrongChars[Math.floor(Math.random() * wrongChars.length)];
+        } else {
+          chars.splice(pos, 0, chars[pos]);
+        }
+        return chars.join('');
+      }
+
+      function mockGenerateAnswer(q, t) {
+        const base = t ? `About ${t}: ` : '';
+        return base + (q ? q + ' ' : '') + 'A concise, two-sentence sample answer generated locally for testing typing behavior.';
+      }
+
+      function mockGenerateQuestion(t) {
+        return `What is one surprising thing about ${t || 'this topic'}?`;
+      }
+
+      async function callApiForAnswer(q, t) {
+        const key = apiKeyEl.value.trim();
+        if (!key) return mockGenerateAnswer(q, t);
+        try {
+          const res = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + key
+            },
+            body: JSON.stringify({
+              model: 'claude-sonnet-4-20250514',
+              max_tokens: 1000,
+              messages: [{ role: 'user', content: `Topic: ${t}\n\nQuestion: ${q}\n\nProvide a clear, concise answer (2-3 sentences).` }]
+            })
+          });
+          const data = await res.json();
+          return data?.content?.[0]?.text || data?.choices?.[0]?.message?.content || data?.text || mockGenerateAnswer(q,t);
+        } catch (e) {
+          console.warn('API call failed, using mock:', e);
+          return mockGenerateAnswer(q,t);
+        }
+      }
+
+      async function callApiForQuestion(t) {
+        const key = apiKeyEl.value.trim();
+        if (!key) return mockGenerateQuestion(t);
+        try {
+          const res = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + key
+            },
+            body: JSON.stringify({
+              model: 'claude-sonnet-4-20250514',
+              max_tokens: 200,
+              messages: [{ role: 'user', content: `Generate a thoughtful interview question about: ${t}` }]
+            })
+          });
+          const data = await res.json();
+          return data?.content?.[0]?.text?.replace(/[\"]/g, '') || data?.choices?.[0]?.message?.content || mockGenerateQuestion(t);
+        } catch (e) {
+          console.warn('API call failed, using mock:', e);
+          return mockGenerateQuestion(t);
+        }
+      }
+
+      async function generateAnswer() {
+        const q = questionEl.value.trim();
+        const t = topicEl.value.trim();
+        if (!q) return;
+        isGenerating = true; isPaused = false; currentIndex = 0; setDisplayed('');
+        const qDelay = Number(qDelayEl.value);
+        await delay(qDelay);
+        answer = await callApiForAnswer(q, t);
+        typeAnswer(answer);
+      }
+
+      async function typeAnswer(txt) {
+        const words = (txt || '').split(/\s+/).filter(Boolean);
+        let result = '';
+        const wDelay = Number(wordDelayEl.value);
+        const eRate = Number(errorRateEl.value);
+        const pRate = Number(pcRateEl.value);
+        for (let i = currentIndex; i < words.length; i++) {
+          if (!isGenerating || isPaused) break;
+          currentIndex = i;
+          let word = words[i];
+          if (Math.random() * 100 < eRate && word.length > 2) {
+            const errorWord = introduceTypingError(word);
+            result += errorWord + ' ';
+            setDisplayed(result);
+            await delay(wDelay * 2);
+            if (!isGenerating || isPaused) break;
+            result = result.slice(0, -errorWord.length - 1) + word + ' ';
+            setDisplayed(result);
+          } else {
+            result += word + ' ';
+            setDisplayed(result);
+          }
+
+          if (Math.random() * 100 < eRate) {
+            const lastChar = result.trim().slice(-1);
+            if (['.', ',', '!', '?'].includes(lastChar)) {
+              if (Math.random() * 100 > pRate) {
+                result = result.trim().slice(0, -1) + ' ';
+                setDisplayed(result);
+              }
+            }
+          }
+
+          await delay(wDelay);
+        }
+        if (currentIndex >= words.length - 1) {
+          isGenerating = false; isPaused = false; currentIndex = 0;
+        }
+      }
+
+      async function generateRandomQuestion() {
+        const t = topicEl.value.trim();
+        if (!t) { alert('Please enter a topic first'); return; }
+        const qgen = await callApiForQuestion(t);
+        questionEl.value = qgen;
+        setDisplayed(''); answer = '';
+        setTimeout(() => { generateAnswer(); }, 100);
+      }
+
+      function stopTyping() { isPaused = true; }
+      function resumeTyping() { if (!isGenerating) return; isPaused = false; typeAnswer(answer); }
+      function resetAll() { questionEl.value=''; topicEl.value=''; setDisplayed(''); answer=''; isGenerating=false; isPaused=false; currentIndex=0; }
+
+      // Event bindings
+      askBtn.addEventListener('click', generateAnswer);
+      resetBtn.addEventListener('click', resetAll);
+      randomBtn.addEventListener('click', generateRandomQuestion);
+      nextBtn.addEventListener('click', generateRandomQuestion);
+      stopBtn.addEventListener('click', stopTyping);
+      resumeBtn.addEventListener('click', resumeTyping);
+      clearKeyBtn.addEventListener('click', () => { apiKeyEl.value=''; });
+
+      // Range bindings
+      wordDelayEl.addEventListener('input', () => wordDelayVal.textContent = wordDelayEl.value);
+      errorRateEl.addEventListener('input', () => errorRateVal.textContent = errorRateEl.value);
+      qDelayEl.addEventListener('input', () => qDelayVal.textContent = qDelayEl.value);
+      pcRateEl.addEventListener('input', () => pcVal.textContent = pcRateEl.value);
+
+      // Keyboard support: Enter to ask
+      questionEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') generateAnswer(); });
+
+      // Initial display
+      setDisplayed('Answer will appear here...');
+    </script>
+  </body>
+</html>
